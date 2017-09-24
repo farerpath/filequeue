@@ -7,6 +7,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+
+	"github.com/urfave/negroni"
 )
 
 type Q struct {
@@ -16,12 +19,19 @@ type Q struct {
 
 var q []Q
 
+// FILE_DIR_NAME string
+// root dir for files
+const FILE_DIR_NAME = "file"
+
 func main() {
 	port := flag.String("port", "80", "bind port (default: 80)")
 
 	handler := http.HandlerFunc(requestHandler)
 
-	err := http.ListenAndServe(":"+*port, handler)
+	n := negroni.New(negroni.NewLogger(), negroni.NewRecovery())
+	n.UseHandler(handler)
+
+	err := http.ListenAndServe(":"+*port, n)
 	log.Fatal(err)
 }
 
@@ -35,7 +45,9 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		http.ServeFile(w, r, q[last].fileID+"/"+q[last].fileName)
+		http.ServeFile(w, r, makeSavePath(q[last].fileID, q[last].fileName))
+
+		os.RemoveAll("file/" + q[last].fileID)
 
 		q = q[:last]
 
@@ -48,16 +60,22 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		fileId := r.FormValue("file_id")
-
 		fileBuffer, err := ioutil.ReadAll(file)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
-		os.Mkdir(fileId, os.ModePerm)                                            // Create dir
-		err = ioutil.WriteFile(fileId+"/"+fileHeader.Filename, fileBuffer, 0644) // Write file
+		fileId := strconv.Itoa(len(q))
+
+		path := makeSavePath(fileId, fileHeader.Filename)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+
+		os.MkdirAll("file/"+fileId, os.ModePerm)       // Create dir
+		err = ioutil.WriteFile(path, fileBuffer, 0644) // Write file
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Print(err)
@@ -70,4 +88,11 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// makeSavePath func
+// private function
+// returns save dir
+func makeSavePath(fileId string, fileName string) string {
+	return FILE_DIR_NAME + "/" + fileId + "/" + fileName
 }
